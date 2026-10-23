@@ -1,0 +1,36 @@
+# Save in your repo as .github/workflows/ty-jerome-live.yml
+name: Ty Jerome Live
+
+on:
+  schedule:
+    # Every 3 hours from late morning to night, Chicago time.
+    # Each run only stays on if a Grizzlies game tips off within ~3 hours.
+    - cron: "0 16 * * *"   # 11am CDT / 10am CST
+    - cron: "0 19 * * *"   # 2pm CDT / 1pm CST
+    - cron: "0 22 * * *"   # 5pm CDT / 4pm CST
+    - cron: "0 1 * * *"    # 8pm CDT / 7pm CST
+  workflow_dispatch:
+    inputs:
+      game_id:
+        description: "Optional: NBA gameId to watch right now (for testing)"
+        required: false
+
+# Only one watcher at a time; a later run waits, then exits if the game is already final.
+concurrency:
+  group: ty-jerome-live
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Watch for Ty Jerome buckets
+        env:
+          TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
+          GAME_ID: ${{ github.event.inputs.game_id }}
+        run: python ty_jerome_live.py
