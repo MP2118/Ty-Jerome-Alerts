@@ -1,0 +1,25 @@
+# Save in your repo as .github/workflows/morning-recap.yml
+name: Morning Recap
+
+on:
+  schedule:
+    - cron: "0 13 * * *"   # 13:00 UTC = 8am Chicago (7am in winter). GitHub may run it a bit late.
+  workflow_dispatch:
+    inputs:
+      game_date:
+        description: "Optional date to recap (YYYY-MM-DD). Blank = last night."
+        required: false
+
+jobs:
+  recap:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Post morning recap
+        env:
+          TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
+          GAME_DATE: ${{ github.event.inputs.game_date }}
+        run: python morning_recap.py
