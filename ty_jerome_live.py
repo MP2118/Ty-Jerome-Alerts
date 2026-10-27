@@ -3,7 +3,7 @@ NBA Live Watcher
 
   * Ty Jerome bucket alerts, with headers that get louder as his night gets better
   * Grizzlies pre-game heads-up ~15 min before tip
-  * Flagrant 2 alerts from ANY game
+  * Ejection alerts (flagrant 2, two techs, anything) from ANY game
   * Shai Gilgeous-Alexander free-throw milestones (10th, 15th, 20th attempt)
 
 Runs on an hourly schedule (see ty-jerome-live.yml). Each run watches every game that is
@@ -139,10 +139,12 @@ SGA_LINES = {
     ],
 }
 
-FLAGRANT_HEADERS = [
-    "🟥 FLAGRANT 2: {player} has been sent to the locker room to think about what he did",
-    "🚪 FLAGRANT 2. Bye bye, {player}. 👋",
+EJECTION_HEADERS = [
+    "🟥 EJECTED: {player} has been sent to the locker room to think about what he did",
+    "🚪 EJECTED. Bye bye, {player}. 👋",
     "🟥 EJECTED: {player} picked violence and the refs picked the exit",
+    "🚿 {player} is EJECTED. Early shower, no towel.",
+    "🍿 EJECTION: {player} has left the building (involuntarily)",
 ]
 
 
@@ -336,26 +338,43 @@ def jerome_final(box, g):
 
 # ---------------- other alerts ----------------
 
-def is_flagrant2(a):
-    text = " ".join(str(a.get(k, "")) for k in ("actionType", "subType", "descriptor", "description")).lower()
+def is_ejection(a):
+    """Ejection rows (any reason), plus flagrant 2 fouls, which are automatic ejections."""
+    kind = str(a.get("actionType", "")).lower()
+    text = " ".join(str(a.get(k, "")) for k in ("subType", "descriptor", "description")).lower()
+    if kind == "ejection" or "ejection" in text or "ejected" in text:
+        return True
     return "flagrant" in text and re.search(r"(type[-_ ]?2|flagrant[-_ ]?2)", text) is not None
 
 
-def flagrant_messages(actions, last, gs, g):
+def ejection_reason(a):
+    text = " ".join(str(a.get(k, "")) for k in ("subType", "descriptor", "description")).lower()
+    if "flagrant" in text:
+        return "Flagrant 2"
+    if "tech" in text:
+        return "Second technical"
+    return None
+
+
+def ejection_messages(actions, last, gs, g):
     msgs = []
-    done = gs.setdefault("f2", [])
+    done = gs.setdefault("ejected", [])
     for a in actions:
-        if a.get("actionNumber", 0) <= last or not is_flagrant2(a):
+        if a.get("actionNumber", 0) <= last or not is_ejection(a):
             continue
         who = a.get("personId") or a.get("description")
-        if who in done:          # foul + ejection rows for the same player → one alert
+        if who in done:          # foul row + ejection row for the same person → one alert
             continue
         done.append(who)
-        player = a.get("playerNameI") or a.get("playerName") or "Somebody"
+        player = a.get("playerNameI") or a.get("playerName")
+        if not player:           # coaches etc. may not have a player name; take it from the text
+            player = (a.get("description", "").split(" Ejection")[0].strip() or "Somebody")
         team = a.get("teamTricode", "")
-        title = random.choice(FLAGRANT_HEADERS).format(player=f"{player} ({team})" if team else player)
-        msgs.append((title, [a.get("description", "").strip(), f"{game_score(a, g)} — {when(a)}"],
-                     "Large", "Attention"))
+        title = random.choice(EJECTION_HEADERS).format(player=f"{player} ({team})" if team else player)
+        reason = ejection_reason(a)
+        lines = [f"Reason: {reason}" if reason else a.get("description", "").strip(),
+                 f"{game_score(a, g)} — {when(a)}"]
+        msgs.append((title, lines, "Large", "Attention"))
     return msgs
 
 
@@ -390,9 +409,17 @@ def maybe_pregame(g, gs, now):
 
 # ---------------- game loop ----------------
 
-def check_game(g, gs):
+def check_game(g, gs, test=False):
     pbp = fetch_or_none(PBP_URL.format(gid=g["id"]))
     box = fetch_or_none(BOXSCORE_URL.format(gid=g["id"]))
+    is_final = bool(box and box["game"].get("gameStatus") == 3)
+    if not test and is_final and "last" not in gs:
+        # First time seeing this game and it's already over (e.g. state wasn't saved):
+        # mark it done quietly instead of re-sending a whole game's worth of alerts.
+        gs["final"] = True
+        gs["last"] = max([0] + [a.get("actionNumber", 0) for a in (pbp or {}).get("game", {}).get("actions", [])])
+        log(f"{g['away']} @ {g['home']} already final on first look — skipping alerts")
+        return
     if pbp:
         actions = sorted(pbp["game"].get("actions", []), key=lambda a: a.get("actionNumber", 0))
         first_pass = "last" not in gs
@@ -400,7 +427,7 @@ def check_game(g, gs):
         msgs = []
         if TEAM in (g["home"], g["away"]):
             msgs += jerome_messages(actions, last, first_pass, g)
-        msgs += flagrant_messages(actions, last, gs, g)
+        msgs += ejection_messages(actions, last, gs, g)
         msgs += sga_messages(actions, gs, g)
         for m in msgs:
             post(*m)
@@ -443,7 +470,7 @@ def run(games, state, test=False):
             if not test and TEAM in (g["home"], g["away"]):
                 maybe_pregame(g, gs, now)
             if test or g["tip"] - timedelta(minutes=1) <= now:
-                check_game(g, gs)
+                check_game(g, gs, test)
         if not test:
             save_state(state)
         time.sleep(POLL_SECONDS)
