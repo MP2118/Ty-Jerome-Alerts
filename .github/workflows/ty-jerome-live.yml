@@ -45,4 +45,9 @@ jobs:
           git add state.json
           git diff --cached --quiet && exit 0
           git commit -m "Update watcher state [skip ci]"
-          git pull --rebase --quiet && git push
+          for i in 1 2 3; do
+            git pull --rebase --quiet origin "${GITHUB_REF_NAME}" && git push origin "HEAD:${GITHUB_REF_NAME}" && exit 0
+            echo "push attempt $i failed, retrying"; sleep 5
+          done
+          echo "::error::Could not save state.json. Check Settings > Actions > General > Workflow permissions = Read and write."
+          exit 1
