@@ -1,7 +1,7 @@
 """
 NBA Morning Recap
 
-Posts last night's scores to Teams, plus the Ty Jerome vs Jalen Brunson points duel,
+Posts last night's scores to Teams, plus the Ty Jerome vs Jalen Brunson vs Wemby points battle,
 and roasts the Knicks and/or Spurs if they lost.
 
 Env vars:
@@ -29,7 +29,9 @@ HEADERS = {
 DUEL = [
     {"id": 1629660, "name": "Ty Jerome", "short": "Jerome", "team": "MEM"},
     {"id": 1628973, "name": "Jalen Brunson", "short": "Brunson", "team": "NYK"},
+    {"id": 1641705, "name": "Victor Wembanyama", "short": "Wemby", "team": "SAS"},
 ]
+MEDALS = ["🥇", "🥈", "🥉"]
 
 ROASTS = {
     "NYK": [
@@ -101,34 +103,36 @@ def find_team_game(games, tri):
 
 
 def duel_lines(games):
-    lines, results = [], []
+    played, out = [], []
     for p in DUEL:
         g = find_team_game(games, p["team"])
         if not g:
-            lines.append(f"**{p['name']}**: no game")
-            results.append((p, None))
+            out.append(f"**{p['name']}**: no game")
             continue
         team = g["homeTeam"] if g["homeTeam"]["teamTricode"] == p["team"] else g["awayTeam"]
         me = next((x for x in team.get("players", []) if x.get("personId") == p["id"]), None)
         if not me or me.get("played") != "1":
-            lines.append(f"**{p['name']}**: DNP")
-            results.append((p, None))
+            out.append(f"**{p['name']}**: DNP")
         else:
-            pts = me["statistics"]["points"]
-            lines.append(f"**{p['name']}**: {pts} PTS")
-            results.append((p, pts))
-    (p1, a), (p2, b) = results
-    if a is None and b is None:
-        return []          # neither played: skip the duel section
-    if a is None:
-        verdict = f"{p2['short']} wins by default."
-    elif b is None:
-        verdict = f"{p1['short']} wins by default."
-    elif a == b:
-        verdict = f"Dead even at {a}."
+            played.append((p, me["statistics"]["points"]))
+    if not played:
+        return []          # nobody played: skip the section
+
+    played.sort(key=lambda x: -x[1])
+    lines, rank = [], 0
+    for i, (p, pts) in enumerate(played):
+        if i and pts < played[i - 1][1]:
+            rank = i       # ties share a medal
+        lines.append(f"{MEDALS[rank]} **{p['name']}**: {pts} PTS")
+    lines += out
+
+    top = [p for p, pts in played if pts == played[0][1]]
+    if len(played) == 1:
+        verdict = f"🏆 {played[0][0]['short']} wins by default."
+    elif len(top) > 1:
+        verdict = f"🤝 Tie at the top: {' & '.join(p['short'] for p in top)} with {played[0][1]}."
     else:
-        w, d = (p1, a - b) if a > b else (p2, b - a)
-        verdict = f"🏆 {w['short']} wins by {d}."
+        verdict = f"🏆 {played[0][0]['short']} wins by {played[0][1] - played[1][1]}."
     return lines + [verdict]
 
 
@@ -157,7 +161,7 @@ def build_card(date, games):
                   weight="Bolder", size="Large", spacing="None")]
     duel = duel_lines(games)
     if duel:
-        body.append(block("🥊 Points Duel", weight="Bolder", spacing="Medium"))
+        body.append(block("🥊 Points Battle", weight="Bolder", spacing="Medium"))
         body += [block(l) for l in duel]
     roasts = roast_lines(games)
     if roasts:
